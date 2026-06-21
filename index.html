@@ -1,0 +1,263 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Advanced Dictation App</title>
+    <style>
+        body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background-color: #1e1e24; color: #ffffff; margin: 0; padding: 20px; }
+        .header { text-align: center; margin-bottom: 20px; }
+        .upload-section { background-color: #2b2b36; padding: 15px; border-radius: 8px; margin-bottom: 20px; display: flex; gap: 20px; justify-content: center; align-items: center; }
+        .container { display: flex; gap: 20px; max-width: 1200px; margin: 0 auto; }
+        .video-section { flex: 1; background-color: #000; border-radius: 8px; overflow: hidden; }
+        video { width: 100%; height: auto; display: block; outline: none; }
+        .dictation-section { flex: 1; background-color: #2b2b36; padding: 20px; border-radius: 8px; display: flex; flex-direction: column; }
+        .controls { display: flex; gap: 10px; margin-bottom: 15px; align-items: center; flex-wrap: wrap; }
+        button { background-color: #4CAF50; color: white; border: none; padding: 10px 15px; border-radius: 5px; cursor: pointer; font-weight: bold; }
+        button:hover { filter: brightness(1.1); }
+        button:disabled { background-color: #555; cursor: not-allowed; filter: none; }
+        .btn-play { background-color: #2196F3; }
+        .btn-hint { background-color: #9c27b0; } 
+        .btn-answer { background-color: #ff9800; }
+        select { background-color: #1e1e24; color: white; border: 1px solid #444; padding: 8px; border-radius: 5px; cursor: pointer; }
+        
+        #visualFeedback { min-height: 40px; background-color: #1a1a20; border: 1px dashed #444; border-radius: 5px; padding: 10px; margin-bottom: 10px; font-size: 18px; display: none; line-height: 1.5; }
+        .word-correct { color: #4CAF50; }
+        .word-incorrect { color: #ff5252; text-decoration: underline; text-decoration-color: #ff5252; text-decoration-thickness: 2px; }
+        textarea { width: 100%; height: 100px; background-color: #1e1e24; color: #fff; border: 1px solid #444; border-radius: 5px; padding: 10px; font-size: 18px; resize: none; box-sizing: border-box; margin-bottom: 15px; line-height: 1.5; }
+        textarea:focus { outline: none; border-color: #2196F3; background-color: #25252e; }
+        #statusMessage { margin-bottom: 15px; font-weight: bold; }
+        .text-success { color: #4CAF50; }
+        .text-hint { color: #9c27b0; font-size: 14px; font-style: italic; margin-left: 10px;}
+        .answer-box { background-color: #1e1e24; padding: 15px; border-radius: 5px; border: 1px solid #444; display: none; margin-top: 15px; }
+    </style>
+</head>
+<body>
+    <div class="header"><h2>Advanced Dictation App</h2></div>
+
+    <div class="upload-section">
+        <div><label>1. Video (.mp4): </label><input type="file" id="videoUpload" accept="video/mp4,video/webm"></div>
+        <div><label>2. Phụ đề (.srt): </label><input type="file" id="srtUpload" accept=".srt"></div>
+    </div>
+
+    <div class="container">
+        <div class="video-section"><video id="videoPlayer" controls></video></div>
+
+        <div class="dictation-section">
+            <div class="controls">
+                <button id="btnPlay" class="btn-play" disabled>▶ Nghe lại (Phím Shift)</button>
+                <select id="speedControl" disabled>
+                    <option value="0.5">Tốc độ: 0.5x</option>
+                    <option value="0.75">Tốc độ: 0.75x</option>
+                    <option value="1" selected>Tốc độ: Chuẩn (1x)</option>
+                    <option value="1.25">Tốc độ: 1.25x</option>
+                </select>
+                <span id="progressText" style="color: #aaa; margin-left: 10px;">0 / 0</span>
+            </div>
+
+            <div id="visualFeedback"></div>
+            <textarea id="userInput" placeholder="Gõ và nhấn Enter để kiểm tra..." disabled></textarea>
+            <div id="statusMessage"></div>
+
+            <div class="controls">
+                <button id="btnHintWord" class="btn-hint" disabled>Gợi ý từ tiếp theo (Enter x2)</button>
+                <button id="btnShowAnswer" class="btn-answer" disabled>Xem đáp án</button>
+                <button id="btnNext" disabled>Câu tiếp theo ⏭</button>
+            </div>
+
+            <div id="answerBox" class="answer-box">
+                <strong>Đáp án đầy đủ:</strong>
+                <p id="correctAnswerText" style="margin-top: 5px; font-size: 16px;"></p>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const videoPlayer = document.getElementById('videoPlayer');
+        const videoUpload = document.getElementById('videoUpload');
+        const srtUpload = document.getElementById('srtUpload');
+        const speedControl = document.getElementById('speedControl');
+        
+        const btnPlay = document.getElementById('btnPlay');
+        const btnHintWord = document.getElementById('btnHintWord');
+        const btnShowAnswer = document.getElementById('btnShowAnswer');
+        const btnNext = document.getElementById('btnNext');
+        const userInput = document.getElementById('userInput');
+        
+        const visualFeedback = document.getElementById('visualFeedback');
+        const statusMessage = document.getElementById('statusMessage');
+        const answerBox = document.getElementById('answerBox');
+        const correctAnswerText = document.getElementById('correctAnswerText');
+        const progressText = document.getElementById('progressText');
+
+        let subtitles = [];
+        let currentIndex = 0;
+        let isPlayingSegment = false;
+        let lastEnterTime = 0;
+        let isSentenceCompleted = false;
+
+        videoUpload.addEventListener('change', e => { if(e.target.files[0]) videoPlayer.src = URL.createObjectURL(e.target.files[0]); });
+        
+        srtUpload.addEventListener('change', e => {
+            if(e.target.files[0]) {
+                const reader = new FileReader();
+                reader.onload = e => {
+                    subtitles = parseSRT(e.target.result);
+                    if(subtitles.length > 0) { enableControls(); loadCurrentSubtitle(); }
+                };
+                reader.readAsText(e.target.files[0]);
+            }
+        });
+
+        // Xử lý thay đổi tốc độ
+        speedControl.addEventListener('change', function() {
+            videoPlayer.playbackRate = parseFloat(this.value);
+        });
+
+        function parseSRT(data) {
+            const regex = /(?:\d+)\s+(\d{2}:\d{2}:\d{2},\d{3}) --> (\d{2}:\d{2}:\d{2},\d{3})\s+([\s\S]*?)(?=\n\s*\n|\s*$)/g;
+            let match, subs = [];
+            while ((match = regex.exec(data)) !== null) {
+                // Thêm regex để lột bỏ toàn bộ thẻ HTML rác như <i>, <b>, <font>
+                let rawText = match[3].replace(/<[^>]+>/g, '');
+                subs.push({ start: timeToSeconds(match[1]), end: timeToSeconds(match[2]), text: rawText.replace(/\n/g, ' ').trim() });
+            }
+            return subs;
+        }
+
+        function timeToSeconds(t) {
+            const p = t.split(':'), s = p[2].split(',');
+            return parseInt(p[0])*3600 + parseInt(p[1])*60 + parseInt(s[0]) + parseInt(s[1])/1000;
+        }
+
+        function enableControls() {
+            btnPlay.disabled = btnHintWord.disabled = btnShowAnswer.disabled = btnNext.disabled = userInput.disabled = speedControl.disabled = false;
+        }
+
+        function loadCurrentSubtitle() {
+            if (currentIndex >= subtitles.length) return;
+            isSentenceCompleted = false;
+            userInput.value = '';
+            visualFeedback.style.display = 'none';
+            visualFeedback.innerHTML = '';
+            answerBox.style.display = 'none';
+            statusMessage.innerHTML = '';
+            progressText.innerText = `${currentIndex + 1} / ${subtitles.length}`;
+            
+            // Khôi phục lại tốc độ phát đã chọn mỗi khi sang câu mới
+            videoPlayer.playbackRate = parseFloat(speedControl.value);
+            
+            userInput.focus();
+            playCurrentSegment();
+        }
+
+        function playCurrentSegment() {
+            if (subtitles.length === 0) return;
+            videoPlayer.currentTime = subtitles[currentIndex].start;
+            videoPlayer.play();
+            isPlayingSegment = true;
+        }
+
+        videoPlayer.addEventListener('timeupdate', () => {
+            if (!isPlayingSegment || subtitles.length === 0) return;
+            if (videoPlayer.currentTime >= subtitles[currentIndex].end) {
+                videoPlayer.pause();
+                isPlayingSegment = false;
+            }
+        });
+
+        btnPlay.addEventListener('click', playCurrentSegment);
+        
+        btnShowAnswer.addEventListener('click', () => {
+            correctAnswerText.innerText = subtitles[currentIndex].text;
+            answerBox.style.display = 'block';
+        });
+
+        btnNext.addEventListener('click', () => {
+            if (currentIndex < subtitles.length - 1) { currentIndex++; loadCurrentSubtitle(); }
+        });
+
+        document.addEventListener('keydown', function(e) {
+            if (e.key === 'Shift' && !e.ctrlKey && !e.altKey && !e.metaKey) {
+                e.preventDefault(); 
+                playCurrentSegment();
+            }
+        });
+
+        function cleanWord(word) {
+            return word.toLowerCase().replace(/[.,\/#!$%\^&\*;:{}=\-_`~()]/g, "").trim();
+        }
+
+        function checkDictationLogic() {
+            const currentTarget = subtitles[currentIndex].text;
+            const targetWordsRaw = currentTarget.trim().split(/\s+/);
+            const userWordsRaw = userInput.value.trim().split(/\s+/).filter(w => w !== "");
+
+            if (userWordsRaw.length === 0) return;
+
+            let visualHTML = ""; let newTextareaValue = ""; let isPerfect = true;
+
+            for (let i = 0; i < userWordsRaw.length; i++) {
+                const uWordClean = cleanWord(userWordsRaw[i]);
+                const tWordClean = i < targetWordsRaw.length ? cleanWord(targetWordsRaw[i]) : null;
+
+                if (tWordClean && uWordClean === tWordClean) {
+                    visualHTML += `<span class="word-correct">${targetWordsRaw[i]}</span> `;
+                    newTextareaValue += targetWordsRaw[i] + " ";
+                } else {
+                    visualHTML += `<span class="word-incorrect">${userWordsRaw[i]}</span> `;
+                    newTextareaValue += userWordsRaw[i] + " ";
+                    isPerfect = false;
+                }
+            }
+
+            visualFeedback.innerHTML = visualHTML.trim(); visualFeedback.style.display = 'block';
+            userInput.value = newTextareaValue;
+
+            if (isPerfect && userWordsRaw.length === targetWordsRaw.length) {
+                statusMessage.innerHTML = '<span class="text-success">✔ Chính xác!</span><span class="text-hint">(Nhấn Enter để sang câu tiếp theo)</span>';
+                userInput.value = currentTarget; 
+                isSentenceCompleted = true;
+            } else { statusMessage.innerHTML = ''; isSentenceCompleted = false; }
+        }
+
+        function triggerHint() {
+            const currentTarget = subtitles[currentIndex].text;
+            const targetWordsRaw = currentTarget.trim().split(/\s+/);
+            const userWordsRaw = userInput.value.trim().split(/\s+/).filter(w => w !== "");
+
+            let correctCount = 0;
+            for (let i = 0; i < userWordsRaw.length; i++) {
+                if (i < targetWordsRaw.length && cleanWord(userWordsRaw[i]) === cleanWord(targetWordsRaw[i])) { correctCount++; } 
+                else { break; }
+            }
+
+            if (correctCount < targetWordsRaw.length) {
+                const newWords = targetWordsRaw.slice(0, correctCount + 1);
+                userInput.value = newWords.join(" ") + " ";
+                checkDictationLogic(); userInput.focus();
+            }
+        }
+        
+        btnHintWord.addEventListener('click', triggerHint);
+
+        userInput.addEventListener('keydown', function(e) {
+            if (e.key === 'Enter') {
+                e.preventDefault(); 
+                if (isSentenceCompleted) { btnNext.click(); } 
+                else {
+                    const currentTime = new Date().getTime();
+                    if (currentTime - lastEnterTime < 500) { triggerHint(); lastEnterTime = 0; } 
+                    else { checkDictationLogic(); lastEnterTime = currentTime; }
+                }
+            }
+        });
+
+        userInput.addEventListener('focus', function() {
+            if (subtitles.length === 0) return;
+            const currentSub = subtitles[currentIndex];
+            if (videoPlayer.currentTime < currentSub.start || videoPlayer.currentTime > currentSub.end) { playCurrentSegment(); }
+        });
+    </script>
+</body>
+</html>
